@@ -261,7 +261,7 @@ Log type:                Firewall events
 Save. pfSense immediately begins streaming firewall events over UDP syslog.
 
 > **Screenshot — pfSense Remote Log Configuration**
-> ![pfSense Syslog Config](screenshots/pfSense%20logs%20go%20to%20Wazuh.png)
+> ![pfSense Syslog Config](screenshots/02-firewall-demo/pfSense%20logs%20go%20to%20Wazuh.png)
 > *pfSense remote logging: Wazuh manager IP 192.168.3.10, port 514 UDP, firewall events selected*
 
 #### Step B — Configure Wazuh to accept syslog input
@@ -294,7 +294,7 @@ ss -ulnp | grep -E '514|1514'
 ```
 
 > **Screenshot — ossec.conf with both remote blocks**
-> ![ossec.conf](screenshots/varossecetcossec.conf.png)
+> ![ossec.conf](screenshots/02-firewall-demo/varossecetcossec.conf.png)
 > *ossec.conf showing port 1514 (agents) and port 514 (pfSense syslog) coexisting correctly*
 
 #### End-to-end data flow
