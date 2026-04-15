@@ -26,10 +26,7 @@
 - [Firewall Block Demonstration](#firewall-block-demonstration)
 - [Attack Simulation](#attack-simulation)
 - [Detection & Alerts](#detection--alerts)
-- [Key Findings](#key-findings)
-- [Incident Report IR-001](#incident-report--ir-001)
 - [Challenges & Solutions](#challenges--solutions)
-- [Skills Demonstrated](#skills-demonstrated)
 
 ---
 
@@ -598,30 +595,6 @@ Windows Event ID `4720` (user created) and `4732` (added to Administrators) both
 > ![User Alert](screenshots/04-wazuh-alerts/alert-new-user-created.png)
 > *Alert detail: win.eventdata.targetUserName="attacker", EventID=4720/4732, rule level=12, agent=windows-victim*
 
----
-
-### MITRE ATT&CK Coverage
-
-All simulated techniques automatically mapped by Wazuh:
-
-| Technique ID | Name | Triggered by |
-|---|---|---|
-| [T1046](https://attack.mitre.org/techniques/T1046/) | Network Service Discovery | Nmap scan from Kali |
-| [T1098](https://attack.mitre.org/techniques/T1098/) | Account Manipulation | net user + net localgroup |
-| [T1565](https://attack.mitre.org/techniques/T1565/) | Data Manipulation | malicious.txt file drop |
-
----
-
-## Key Findings
-
-| Finding | Evidence | Severity |
-|---|---|---|
-| Port scan detected within 3 seconds | Wazuh alert — rule 40101 | High |
-| Rogue admin account created and logged | Windows Event ID 4720 + 4732 | Critical |
-| File creation on victim desktop detected | Wazuh FIM syscheck event — hash recorded | Medium |
-| pfSense block rule fully isolated attacker | 100% packet loss + pfSense firewall log entries | Confirmed |
-| pfSense blocks forwarded to Wazuh SIEM | Wazuh alerts ingested via UDP 514 syslog | Confirmed |
-| MITRE ATT&CK techniques mapped | T1046 · T1098 · T1565 visible in dashboard | — |
 
 ---
 
@@ -630,36 +603,6 @@ All simulated techniques automatically mapped by Wazuh:
 **Date:** 2024-XX-XX · **Analyst:** [Your Name] · **Severity:** HIGH
 
 **Summary:** Simulated attacker (`192.168.1.10`) performed reconnaissance, created an unauthorized administrator account, and dropped suspicious files on victim `192.168.2.20`. All activities detected and logged by Wazuh.
-
-**Attack timeline:**
-
-| Time | Event | Detection Source |
-|---|---|---|
-| T+0:00 | Nmap scan launched from Kali | Kali terminal |
-| T+0:03 | Scan detected — Wazuh rule 40101 fired | Wazuh alert |
-| T+2:00 | `net user attacker /add` executed | Windows cmd |
-| T+2:05 | Event ID 4720 — Wazuh alert triggered | Windows Security log |
-| T+2:10 | `net localgroup administrators attacker /add` | Windows cmd |
-| T+2:12 | Event ID 4732 — admin escalation detected | Wazuh alert |
-| T+4:00 | malicious.txt dropped on victim desktop | Windows |
-| T+4:55 | FIM event — file path + SHA256 logged | Wazuh syscheck |
-
-**Indicators of Compromise:**
-
-- Attacker IP: `192.168.1.10`
-- Rogue account: `attacker` (local administrator)
-- Malicious file: `C:\Users\victime1\Desktop\malicious.txt`
-- MITRE techniques: T1046 · T1098 · T1565
-
-**Containment:** Block rule applied in pfSense (`192.168.1.0/24 → 192.168.2.0/24 BLOCK`). Rogue account removed: `net user attacker /delete`. Malicious files deleted.
-
-**Recommendations:**
-
-1. Enforce account creation alert with automatic Wazuh active response
-2. Windows account lockout after 5 failed attempts (Group Policy)
-3. Wazuh active response: auto-block attacker IP on critical severity alerts
-4. Deploy Suricata on pfSense for deep packet inspection
-5. SSH key-only authentication on all Linux hosts
 
 ---
 
@@ -693,54 +636,3 @@ All simulated techniques automatically mapped by Wazuh:
 | **Linux administration** | Netplan, systemd, dpkg, ss, netstat |
 | **Windows administration** | PowerShell, sc query, MSI silent install, Event Viewer |
 
----
-
-## Repository Structure
-
-```
-soc-lab/
-├── README.md
-├── screenshots/
-│   ├── pfSense logs go to Wazuh.png
-│   ├── varossecetcossec.conf.png
-│   ├── 01-infrastructure/
-│   │   ├── vm-overview.png
-│   │   ├── pfsense-dashboard.png
-│   │   ├── pfsense-interfaces.png
-│   │   ├── Firewall rules LAN.png
-│   │   ├── Firewall rules OPT1.png
-│   │   ├── Firewall rules OPT2.png
-│   │   ├── Firewall rules WAN.png
-│   │   ├── Wazuh-dashboard.png
-│   │   └── Wazuh-agents-page.png
-│   ├── 02-firewall-demo/
-│   │   ├── before-block-ping.png
-│   │   ├── pfsense-block-rule.png
-│   │   ├── after-block-ping.png
-│   │   ├── attacker bolcked.png
-│   │   ├── befor and after firewall.png
-│   │   ├── pfsense-firewall-log.png
-│   │   └── wazuh-firewall-alerts.png
-│   ├── 03-attacks/
-│   │   ├── nmap-scan-kali.png
-│   │   ├── privilege-escalation-cmd.png
-│   │   └── fim-file-creation.png
-│   ├── 04-wazuh-alerts/
-│   │   └── alert-new-user-created.png
-│   └── 05-dashboards/
-├── rules/
-│   └── local_rules.xml
-├── config/
-│   ├── ossec.conf
-│   └── netplan-siem.yaml
-└── reports/
-    └── IR-001-privilege-escalation.md
-```
-
----
-
-## Author
-
-Built as a hands-on SOC lab project to develop practical skills in blue team operations, SIEM engineering, network security monitoring, and incident response.
-
-*LinkedIn: [your profile] · GitHub: [your profile]*
