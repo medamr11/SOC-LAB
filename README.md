@@ -15,16 +15,19 @@
 - [Objective](#objective)
 - [Architecture Overview](#architecture-overview)
 - [IP Addressing Plan](#ip-addressing-plan)
+- [Tools & Downloads](#tools--downloads)
 - [Infrastructure Setup](#infrastructure-setup)
   - [pfSense Configuration](#1-pfsense-configuration)
   - [Wazuh SIEM Deployment](#2-wazuh-siem-deployment)
-  - [Windows Agent Setup](#3-windows-agent-setup)
-  - [Ubuntu Agent Setup](#4-ubuntu-agent-setup)
-  - [Kali Linux Setup](#5-kali-linux-setup)
+  - [pfSense → Wazuh Syslog Integration](#3-pfsense--wazuh-syslog-integration)
+  - [Windows Agent Setup](#4-windows-agent-setup)
+  - [Ubuntu Agent Setup](#5-ubuntu-agent-setup)
+  - [Kali Linux Setup](#6-kali-linux-setup)
 - [Firewall Block Demonstration](#firewall-block-demonstration)
 - [Attack Simulation](#attack-simulation)
 - [Detection & Alerts](#detection--alerts)
 - [Key Findings](#key-findings)
+- [Incident Report IR-001](#incident-report--ir-001)
 - [Challenges & Solutions](#challenges--solutions)
 - [Skills Demonstrated](#skills-demonstrated)
 
@@ -52,31 +55,33 @@ Build a realistic, isolated lab environment that simulates a corporate network w
                           │   │    Kali Linux         │   │
                           │   │    192.168.1.10       │   │
                           │   └──────────────────────┘   │
-                          └──────────────┬──────────────┘
+                          └──────────────┬───────────────┘
                                          │ EM1 · 192.168.1.1
 ┌──────────┐   NAT        ┌──────────────▼──────────────┐
-│ Internet │──────────────│         pfSense              │──────────────┐
-└──────────┘  253.0/24    │     Router + Firewall        │              │
-                          │  EM0(WAN) EM1 EM2 EM3        │              │
-                          └──────────────┬──────────────┘              │
-                                         │                              │
-                   EM3 · 192.168.3.1     │    EM2 · 192.168.2.1        │
-                          ┌──────────────┘              │              │
-           ┌──────────────▼──────────────┐  ┌───────────▼──────────────┐
-           │         SIEM ZONE            │  │       VICTIM ZONE        │
-           │     192.168.3.0/24 (EM3)    │  │   192.168.2.0/24 (EM2)  │
-           │  ┌────────────────────────┐  │  │  ┌──────────┐ ┌───────┐ │
-           │  │   Wazuh Manager        │  │  │  │ Windows  │ │Ubuntu │ │
-           │  │   192.168.3.10         │◄─┼──┼──│  .2.20   │ │ .2.30 │ │
-           │  │   + OpenSearch         │  │  │  │  agent   │ │ agent │ │
-           │  └────────────────────────┘  │  │  └──────────┘ └───────┘ │
-           └──────────────────────────────┘  └──────────────────────────┘
-                  ▲ Logs (UDP 1514)                  Log forwarding
+│ Internet │──────────────│         pfSense              │
+└──────────┘  253.0/24    │     Router + Firewall        │
+                          │  EM0(WAN) EM1 EM2 EM3        │
+                          └──────┬───────────┬───────────┘
+                                 │           │
+              EM3 · 192.168.3.1  │           │  EM2 · 192.168.2.1
+           ┌─────────────────────┘           └──────────────────────┐
+           │                                                         │
+┌──────────▼──────────────────────┐   ┌──────────────────────────────▼──────┐
+│          SIEM ZONE               │   │           VICTIM ZONE                │
+│      192.168.3.0/24 (EM3)       │   │       192.168.2.0/24 (EM2)          │
+│  ┌─────────────────────────────┐ │   │  ┌─────────────┐  ┌─────────────┐  │
+│  │   Wazuh Manager 4.7.5       │◄┼───┼──│ Windows 10  │  │   Ubuntu    │  │
+│  │   192.168.3.10              │ │   │  │ 192.168.2.20│  │192.168.2.30 │  │
+│  │   + OpenSearch + Dashboard  │ │   │  │  (agent)    │  │  (agent)    │  │
+│  └─────────────────────────────┘ │   │  └─────────────┘  └─────────────┘  │
+└──────────────────────────────────┘   └──────────────────────────────────────┘
+   ▲ Syslog UDP:514 (from pfSense)
+   ▲ Agent logs UDP:1514 (from victims)
 ```
 
-> **Screenshot — VM Overview**
+> **Screenshot — All VMs running in VMware**
 > ![VM Overview](screenshots/01-infrastructure/vm-overview.png)
-> *All 4 VMs running simultaneously in VMware — pfSense, Kali, Windows, Wazuh*
+> *All 4 VMs powered on simultaneously: pfSense, Kali Linux, Windows 10, Wazuh (Ubuntu Server)*
 
 ---
 
@@ -86,8 +91,26 @@ Build a realistic, isolated lab environment that simulates a corporate network w
 |---|---|---|---|---|
 | WAN | EM0 | DHCP (ISP) | 192.168.253.0/24 | pfSense WAN |
 | Attacker | EM1 | 192.168.1.1 | 192.168.1.0/24 | Kali Linux `192.168.1.10` |
-| Victims | EM2 | 192.168.2.1 | 192.168.2.0/24 | Windows `192.168.2.20`, Ubuntu `192.168.2.30` |
-| SIEM | EM3 | 192.168.3.1 | 192.168.3.0/24 | Wazuh `192.168.3.10` |
+| Victims | EM2 | 192.168.2.1 | 192.168.2.0/24 | Windows `192.168.2.20` · Ubuntu `192.168.2.30` |
+| SIEM | EM3 | 192.168.3.1 | 192.168.3.0/24 | Wazuh Manager `192.168.3.10` |
+
+---
+
+## Tools & Downloads
+
+Every tool used in this lab is free and open source.
+
+| Tool | Version | Purpose | Download |
+|---|---|---|---|
+| pfSense CE | Latest | Firewall / Router / Network segmentation | [pfsense.org/download](https://www.pfsense.org/download/) |
+| Wazuh | 4.7.5 | SIEM — log collection, correlation, detection | [documentation.wazuh.com](https://documentation.wazuh.com/current/installation-guide/index.html) |
+| Kali Linux | Rolling | Attack simulation platform | [kali.org/get-kali](https://www.kali.org/get-kali/#kali-virtual-machines) |
+| Ubuntu Server | 22.04 LTS | Wazuh host OS + Ubuntu victim | [ubuntu.com/download/server](https://ubuntu.com/download/server) |
+| Windows 10 | Eval | Victim machine + Windows agent | [microsoft.com/evalcenter](https://www.microsoft.com/en-us/evalcenter/evaluate-windows-10-enterprise) |
+| VMware Workstation | Player (free) | Hypervisor for all VMs | [vmware.com/products/workstation-player](https://www.vmware.com/products/workstation-player.html) |
+| Wazuh Agent (Windows) | 4.7.5 | Windows endpoint monitoring | [wazuh-agent-4.7.5-1.msi](https://packages.wazuh.com/4.x/windows/wazuh-agent-4.7.5-1.msi) |
+| Wazuh Agent (Linux) | 4.7.5 | Linux endpoint monitoring | [packages.wazuh.com › apt](https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/) |
+| Nmap | Latest | Network scanning / reconnaissance | Pre-installed on Kali · [nmap.org/download](https://nmap.org/download) |
 
 ---
 
@@ -95,62 +118,76 @@ Build a realistic, isolated lab environment that simulates a corporate network w
 
 ### 1. pfSense Configuration
 
-pfSense was installed on VMware with 4 network adapters mapped to internal networks. Interfaces were assigned via the console, then fully configured via the web UI at `http://192.168.1.1`.
+pfSense CE was installed on VMware with 4 network adapters, each mapped to a dedicated internal network representing an isolated security zone.
 
-**Interface assignment:**
+**Interface assignment (console — option 1):**
 
 ```
-em0 → WAN  (NAT / Internet)
+em0 → WAN  (NAT / Internet · DHCP)
 em1 → LAN  (Attacker zone · 192.168.1.1/24)
-em2 → OPT1 (Victim zone   · 192.168.2.1/24)
-em3 → OPT2 (SIEM zone     · 192.168.3.1/24)
+em2 → OPT1 (Victim zone   · 192.168.2.1/24)  renamed → VICTIMS
+em3 → OPT2 (SIEM zone     · 192.168.3.1/24)  renamed → SIEM
 ```
 
-**Key commands used on pfSense (shell):**
+**Shell commands used for diagnostics:**
 
 ```bash
-# Check routing table
+# Check routing table — confirms inter-zone routes are present
 netstat -rn
 
-# Disable firewall for baseline testing
+# Temporarily disable firewall for baseline connectivity testing
 pfctl -d
 
-# Re-enable firewall
+# Re-enable firewall after testing
 pfctl -e
 ```
 
-**Firewall rules configured:**
+**Firewall rules configured (WebUI):**
 
-| Interface | Source | Destination | Action | Purpose |
+| Tab | Source | Destination | Action | Logged |
 |---|---|---|---|---|
-| LAN (Attacker) | 192.168.1.0/24 | 192.168.2.0/24 | PASS | Allow attacks to victims |
-| LAN (Attacker) | 192.168.1.0/24 | 192.168.3.0/24 | BLOCK | Attacker cannot reach SIEM |
-| OPT1 (Victims) | 192.168.2.0/24 | 192.168.3.10 port 1514 | PASS | Agent log forwarding |
-| OPT1 (Victims) | 192.168.2.0/24 | 192.168.1.0/24 | BLOCK | Victims cannot reach attacker |
+| LAN | 192.168.1.0/24 | 192.168.2.0/24 | PASS | Yes |
+| LAN | 192.168.1.0/24 | 192.168.3.0/24 | BLOCK | Yes |
+| OPT1 (VICTIMS) | 192.168.2.0/24 | 192.168.3.10 :1514 | PASS | Yes |
+| OPT1 (VICTIMS) | 192.168.2.0/24 | 192.168.1.0/24 | BLOCK | Yes |
+| OPT2 (SIEM) | 192.168.3.0/24 | any | PASS | No |
+| WAN | any | any | BLOCK | Yes |
 
-> **Screenshot — pfSense Dashboard**
+> **Screenshot — pfSense System Dashboard**
 > ![pfSense Dashboard](screenshots/01-infrastructure/pfsense-dashboard.png)
-> *pfSense system dashboard showing all 4 interfaces with active status and assigned IPs*
+> *pfSense dashboard — all 4 interfaces shown with active status and assigned IPs*
 
 > **Screenshot — Interface Assignments**
 > ![pfSense Interfaces](screenshots/01-infrastructure/pfsense-interfaces.png)
-> *Interface assignment table: em0=WAN, em1=LAN, em2=OPT1 (VICTIMS), em3=OPT2 (SIEM)*
+> *Interface table: em0=WAN, em1=LAN (attacker), em2=OPT1 (victims), em3=OPT2 (SIEM)*
 
-> **Screenshot — Firewall Rules (LAN tab)**
-> ![Firewall Rules LAN](screenshots/01-infrastructure/pfsense-fw-rules-lan.png)
-> *LAN firewall rules showing PASS and BLOCK entries with source/destination/action columns*
+> **Screenshot — Firewall Rules: LAN (Attacker zone)**
+> ![Firewall Rules LAN](screenshots/01-infrastructure/Firewall%20rules%20LAN.png)
+> *LAN tab: PASS to victim zone, BLOCK to SIEM zone — attacker cannot touch monitoring infrastructure*
 
-> **Screenshot — Firewall Rules (OPT1 tab)**
-> ![Firewall Rules OPT1](screenshots/01-infrastructure/pfsense-fw-rules-opt1.png)
-> *OPT1 (victim zone) rules — allows log forwarding to Wazuh, blocks return traffic to attacker*
+> **Screenshot — Firewall Rules: OPT1 (Victim zone)**
+> ![Firewall Rules OPT1](screenshots/01-infrastructure/Firewall%20rules%20OPT1.png)
+> *OPT1 tab: PASS for agent traffic to Wazuh port 1514, BLOCK back to attacker zone*
+
+> **Screenshot — Firewall Rules: OPT2 (SIEM zone)**
+> ![Firewall Rules OPT2](screenshots/01-infrastructure/Firewall%20rules%20OPT2.png)
+> *OPT2 tab: SIEM zone permitted outbound for updates and dashboard access*
+
+> **Screenshot — Firewall Rules: WAN**
+> ![Firewall Rules WAN](screenshots/01-infrastructure/Firewall%20rules%20WAN.png)
+> *WAN tab: all unsolicited inbound traffic blocked by default*
 
 ---
 
 ### 2. Wazuh SIEM Deployment
 
-Wazuh was deployed on Ubuntu Server 22.04 (`192.168.3.10`) using the official all-in-one installation script. This installs the manager, indexer (OpenSearch), and dashboard in a single process.
+Wazuh 4.7.5 deployed on Ubuntu Server 22.04 (`192.168.3.10`) using the [official all-in-one installation assistant](https://documentation.wazuh.com/current/installation-guide/wazuh-indexer/installation-assistant.html). This single process installs three components:
 
-**Static IP configuration via Netplan:**
+- **Wazuh Manager** — receives and processes agent logs
+- **Wazuh Indexer** (OpenSearch) — stores and indexes all security events
+- **Wazuh Dashboard** — visualization, alert management, and MITRE mapping
+
+**Static IP via Netplan (required before installation):**
 
 ```yaml
 # /etc/netplan/00-installer-config.yaml
@@ -169,21 +206,23 @@ network:
 ```
 
 ```bash
-# Apply network config
+# Check interfaces
+ip a
+
+# Apply the config
 sudo netplan apply
 
-# Verify
-ip a
+# Verify gateway
 ping 192.168.3.1
 ```
 
-**Wazuh installation:**
+**Wazuh all-in-one installation:**
 
 ```bash
 curl -sO https://packages.wazuh.com/4.7/wazuh-install.sh
 curl -sO https://packages.wazuh.com/4.7/config.yml
 
-# Edit config.yml to set node IP to 192.168.3.10, then:
+# Edit config.yml: set all node IPs to 192.168.3.10
 bash wazuh-install.sh --generate-config-files
 bash wazuh-install.sh --wazuh-indexer node-1
 bash wazuh-install.sh --start-cluster
@@ -191,50 +230,115 @@ bash wazuh-install.sh --wazuh-server wazuh-1
 bash wazuh-install.sh --wazuh-dashboard dashboard
 ```
 
-Dashboard accessible at: `https://192.168.3.10`
+Dashboard: `https://192.168.3.10` (credentials printed at end of install)
 
-**Syslog receiver enabled in `/var/ossec/etc/ossec.conf`:**
+> **Screenshot — Wazuh Dashboard Home**
+> ![Wazuh Dashboard](screenshots/01-infrastructure/Wazuh-dashboard.png)
+> *Wazuh home — agent count, total events, alert severity breakdown, module status all visible*
+
+> **Screenshot — Wazuh Agents Page**
+> ![Wazuh Agents](screenshots/01-infrastructure/Wazuh-agents-page.png)
+> *Agents list: Windows victim — Status=Active, IP=192.168.2.20, Version=4.7.5, last keepalive shown*
+
+---
+
+### 3. pfSense → Wazuh Syslog Integration
+
+This integration closes the detection loop: every firewall event pfSense processes (connection, block, scan) is forwarded in real-time to Wazuh as a structured security alert — without installing any agent on pfSense.
+
+#### Step A — Enable remote logging on pfSense
+
+`Status → System Logs → Settings → Remote Logging`:
+
+```
+Enable Remote Logging:   ✅ checked
+Remote log server:       192.168.3.10
+Port:                    514
+Protocol:                UDP
+Log type:                Firewall events
+```
+
+Save. pfSense immediately begins streaming firewall events over UDP syslog.
+
+> **Screenshot — pfSense Remote Log Configuration**
+> ![pfSense Syslog Config](screenshots/pfSense%20logs%20go%20to%20Wazuh.png)
+> *pfSense remote logging: Wazuh manager IP 192.168.3.10, port 514 UDP, firewall events selected*
+
+#### Step B — Configure Wazuh to accept syslog input
+
+Edit `/var/ossec/etc/ossec.conf` on the Wazuh manager — add a second `<remote>` block alongside the existing agent listener:
 
 ```xml
+<!-- Existing block — DO NOT remove (agent connections) -->
+<remote>
+  <connection>secure</connection>
+  <port>1514</port>
+  <protocol>udp</protocol>
+</remote>
+
+<!-- New block — syslog from pfSense -->
 <remote>
   <connection>syslog</connection>
   <port>514</port>
   <protocol>udp</protocol>
-  <allowed-ips>192.168.2.0/24</allowed-ips>
+  <allowed-ips>192.168.3.1</allowed-ips>   <!-- pfSense OPT2 interface IP -->
 </remote>
 ```
 
-> **Screenshot — Wazuh Dashboard Home**
-> ![Wazuh Dashboard](screenshots/01-infrastructure/wazuh-dashboard-home.png)
-> *Wazuh overview page showing agent count, total events, alert severity distribution*
+```bash
+# Restart manager to apply
+sudo systemctl restart wazuh-manager
 
-> **Screenshot — Wazuh Active Agents**
-> ![Wazuh Agents](screenshots/01-infrastructure/wazuh-agents-active.png)
-> *Agents list — Windows victim showing status: Active, IP: 192.168.2.20, version 4.7.5*
+# Confirm both ports are listening
+ss -ulnp | grep -E '514|1514'
+```
+
+> **Screenshot — ossec.conf with both remote blocks**
+> ![ossec.conf](screenshots/varossecetcossec.conf.png)
+> *ossec.conf showing port 1514 (agents) and port 514 (pfSense syslog) coexisting correctly*
+
+#### End-to-end data flow
+
+```
+Kali scans / hits block rule
+         │
+         ▼
+pfSense evaluates rule → BLOCK → writes log entry
+         │
+         │  UDP syslog · port 514
+         ▼
+Wazuh Manager (192.168.3.10)
+         │
+         │  Parses + enriches event
+         ▼
+OpenSearch indexes it → alert visible in Wazuh Dashboard
+```
+
+**Result:** Network enforcement (pfSense) and threat detection (Wazuh) operate as one unified system. Zero agents required on the firewall.
 
 ---
 
-### 3. Windows Agent Setup
+### 4. Windows Agent Setup
 
-Wazuh agent version 4.7.5 was installed on Windows 10 (`192.168.2.20`) and registered to the Wazuh manager.
+Wazuh agent 4.7.5 installed on Windows 10 (`192.168.2.20`).
 
-**Installation:**
+**Download:** [wazuh-agent-4.7.5-1.msi](https://packages.wazuh.com/4.x/windows/wazuh-agent-4.7.5-1.msi)
 
 ```powershell
-# Silent install pointing to Wazuh manager
+# Silent install — registers agent to Wazuh manager
 msiexec /i wazuh-agent-4.7.5-1.msi /q WAZUH_MANAGER="192.168.3.10"
 
 # Start the service
 NET START WazuhSvc
 
-# Verify status
+# Verify service state
 sc query WazuhSvc
 
-# Manually register agent if needed
+# Manual registration if auto-enroll fails
 "C:\Program Files (x86)\ossec-agent\agent-auth.exe" -m 192.168.3.10
 ```
 
-**Connectivity test before registration:**
+**Pre-install connectivity test:**
 
 ```powershell
 ipconfig
@@ -242,7 +346,7 @@ ping 192.168.3.10
 Test-NetConnection 192.168.3.10 -Port 1514
 ```
 
-**Additional log sources configured in `ossec.conf`:**
+**Additional log sources (`ossec.conf` on agent):**
 
 ```xml
 <localfile>
@@ -257,14 +361,15 @@ Test-NetConnection 192.168.3.10 -Port 1514
 
 ---
 
-### 4. Ubuntu Agent Setup
+### 5. Ubuntu Agent Setup
 
-Wazuh agent was deployed on the Ubuntu victim machine (`192.168.2.30`) in the victim zone.
+Wazuh agent deployed on Ubuntu victim (`192.168.2.30`).
 
-**Static IP configuration:**
+**Download:** [packages.wazuh.com › apt pool](https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/)
+
+**Static IP (Netplan):**
 
 ```yaml
-# /etc/netplan/*.yaml
 network:
   version: 2
   ethernets:
@@ -281,44 +386,46 @@ network:
 
 ```bash
 sudo netplan apply
+ping 192.168.2.1      # gateway check
+ping 192.168.3.10     # Wazuh reachable
 ```
 
-**Agent installation and registration:**
+**Agent install and registration:**
 
 ```bash
-# Download agent package
 wget https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.7.5-1_amd64.deb
 
-# Install with manager address
 sudo WAZUH_MANAGER="192.168.3.10" dpkg -i wazuh-agent_4.7.5-1_amd64.deb
 
-# Enable and start
 sudo systemctl enable wazuh-agent
 sudo systemctl start wazuh-agent
 
 # Verify
 sudo systemctl status wazuh-agent
 
-# Register if needed
+# Manual registration
 sudo /var/ossec/bin/agent-auth -m 192.168.3.10
 ```
 
 ---
 
-### 5. Kali Linux Setup
+### 6. Kali Linux Setup
 
-Kali Linux (`192.168.1.10`) operates in the isolated attacker zone. It has no direct route to the SIEM zone — only to the victim zone, enforced by pfSense.
+Kali (`192.168.1.10`) operates in the isolated attacker zone. pfSense allows it to reach victims but blocks it from the SIEM zone by design.
 
-**Connectivity verification:**
+**Download:** [kali.org/get-kali](https://www.kali.org/get-kali/#kali-virtual-machines) — VMware image available directly
 
 ```bash
-# Confirm local gateway
+# Verify interfaces
+ip a
+
+# Gateway reachable
 ping -c 4 192.168.1.1
 
-# Confirm attacker can reach victim
+# Victim reachable (before any block rule)
 ping -c 4 192.168.2.20
 
-# Confirm SIEM is unreachable from attacker (expected: 100% loss)
+# SIEM NOT reachable from attacker (expected: 100% packet loss — by design)
 ping -c 4 192.168.3.10
 ```
 
@@ -326,202 +433,182 @@ ping -c 4 192.168.3.10
 
 ## Firewall Block Demonstration
 
-This section demonstrates pfSense enforcing network segmentation by completely blocking the attacker from reaching victim machines — and showing that evidence of the block is captured both in pfSense logs and in Wazuh.
+The core security proof: pfSense enforces zone isolation by completely cutting the attacker off from victims. Evidence is captured at two layers — the network firewall (pfSense logs) and the SIEM (Wazuh alerts).
+
+---
 
 ### Step 1 — Baseline: attacker reaches victim (BEFORE block rule)
 
 ```bash
-# On Kali — confirms connectivity exists before rule is applied
 ping -c 4 192.168.2.20
 nmap -Pn -sS 192.168.2.20 -F
 ```
 
-> **Screenshot — Before Block (Kali Terminal)**
-> ![Before Block](screenshots/02-firewall-demo/01-before-block-ping.png)
-> *Kali terminal showing successful ping replies and open ports — full connectivity to victim*
+> **Screenshot — Before Block**
+> ![Before Block](screenshots/02-firewall-demo/before-block-ping.png)
+> *Kali: ping replies with 0% packet loss, Nmap shows open ports — attacker has full access to victim*
 
 ---
 
 ### Step 2 — Apply block rule in pfSense
 
-Rule added via `Firewall → Rules → LAN → Add` (placed at top of ruleset so it evaluates first):
+`Firewall → Rules → LAN → Add` (placed at top of list so it's evaluated first):
 
 ```
 Action:       Block
 Interface:    LAN
 Protocol:     any
-Source:       192.168.1.0/24
-Destination:  192.168.2.0/24
-Log:          Enabled
+Source:       Network → 192.168.1.0 / 24
+Destination:  Network → 192.168.2.0 / 24
+Log:          ✅ Enabled  ← required for pfSense firewall log entries
 Description:  Block attacker zone from victim zone
 ```
 
-> **Screenshot — Block Rule in pfSense**
-> ![pfSense Block Rule](screenshots/02-firewall-demo/02-pfsense-block-rule.png)
-> *pfSense LAN rules tab — red BLOCK icon at the top, source=attacker subnet, dest=victim subnet*
+> **Screenshot — Block Rule Applied**
+> ![pfSense Block Rule](screenshots/02-firewall-demo/pfsense-block-rule.png)
+> *LAN rules tab: red BLOCK icon at top, source=attacker /24, destination=victim /24, logging enabled*
 
 ---
 
-### Step 3 — Verify: attacker is now blocked (AFTER block rule)
+### Step 3 — Verify: attacker is fully blocked (AFTER block rule)
 
 ```bash
-# On Kali — same commands, now fail completely
-ping -c 4 192.168.2.20          # Expected: 100% packet loss
-nmap -Pn -sS 192.168.2.20 -F   # Expected: all ports filtered / host seems down
-nc -zv 192.168.2.20 445         # Expected: connection timed out
-nc -zv 192.168.2.20 3389        # Expected: connection timed out
+ping -c 4 192.168.2.20           # Expected: 100% packet loss
+nmap -Pn -sS 192.168.2.20 -F    # Expected: host seems down / all ports filtered
+nc -zv 192.168.2.20 445          # SMB — connection timed out
+nc -zv 192.168.2.20 3389         # RDP — connection timed out
 ```
 
 > **Screenshot — After Block (100% Packet Loss)**
-> ![After Block](screenshots/02-firewall-demo/03-after-block-ping.png)
-> *Kali terminal showing 100% packet loss and Nmap reporting host as down — zero connectivity*
+> ![After Block](screenshots/02-firewall-demo/after-block-ping.png)
+> *Kali: 100% packet loss, Nmap reports host as down — zero connectivity to victim zone*
+
+> **Screenshot — Attacker Blocked (connection refused)**
+> ![Attacker Blocked](screenshots/02-firewall-demo/attacker%20bolcked.png)
+> *Kali: all TCP connection attempts to victim ports timeout — firewall silently dropping packets*
 
 > **Screenshot — Before vs After Side by Side**
-> ![Before After Comparison](screenshots/02-firewall-demo/04-before-after-split.png)
-> *Split terminal: left=ping replies (before), right=100% loss (after block rule applied)*
+> ![Before After Comparison](screenshots/02-firewall-demo/befor%20and%20after%20firewall.png)
+> *Split view: left=successful ping before rule, right=100% packet loss after rule — same machine, same target*
 
 ---
 
-### Step 4 — pfSense logs confirm blocked traffic
+### Step 4 — pfSense firewall log records every blocked packet
 
-In pfSense: `Status → System Logs → Firewall` — filtered by source IP `192.168.1.10`:
+`Status → System Logs → Firewall` — filtered by source `192.168.1.10`:
 
 > **Screenshot — pfSense Firewall Log**
-> ![pfSense Firewall Log](screenshots/02-firewall-demo/05-pfsense-firewall-log.png)
-> *pfSense firewall log showing red BLOCK entries: attacker IP → victim IP, timestamps, interface LAN*
+> ![pfSense Firewall Log](screenshots/02-firewall-demo/pfsense-firewall-log.png)
+> *Firewall log: red BLOCK entries per row — attacker IP, victim IP, timestamp, interface LAN, protocol*
 
 ---
 
-### Step 5 — Wazuh ingests the block events as security alerts
+### Step 5 — Wazuh ingests the blocks as security alerts
 
-Since pfSense forwards syslog to Wazuh (`192.168.3.10:514`), every blocked packet also appears in the SIEM:
+pfSense streams these events to Wazuh via UDP syslog (port 514). Every blocked packet becomes a searchable Wazuh security event:
 
-> **Screenshot — Wazuh Alert from pfSense Block**
-> ![Wazuh Firewall Alert](screenshots/02-firewall-demo/06-wazuh-firewall-alert.png)
-> *Wazuh events showing pfSense block events — rule description, source IP 192.168.1.10, destination 192.168.2.20*
+> **Screenshot — Wazuh Alerts from pfSense Blocks**
+> ![Wazuh Firewall Alert](screenshots/02-firewall-demo/wazuh-firewall-alerts.png)
+> *Wazuh events: pfSense block entries indexed — source IP 192.168.1.10, rule description, severity, timestamp*
 
-**Result:** The attacker is completely isolated. Network enforcement (pfSense) and detection (Wazuh) work as a single coordinated system.
+**Full detection loop confirmed:**
+
+```
+Attacker scans  ──►  pfSense BLOCKS  ──►  logs event  ──►  Wazuh ALERTS
+                           ▲                                      ▲
+                     Network layer                          SIEM layer
+```
 
 ---
 
 ## Attack Simulation
 
-All attacks were launched from Kali (`192.168.1.10`) against Windows (`192.168.2.20`) and Ubuntu (`192.168.2.30`) victims, with the firewall block rule disabled for this phase.
+All attacks launched from Kali (`192.168.1.10`) against Windows victim (`192.168.2.20`). The block rule was temporarily disabled for this phase to allow traffic to reach the victim — demonstrating that attacks that do land are also detected.
 
 ---
 
-### Attack 1 — Network Reconnaissance (Nmap)
+### Attack 1 — Network Reconnaissance
 
-**MITRE ATT&CK:** T1046 — Network Service Discovery
+**MITRE ATT&CK:** [T1046 — Network Service Discovery](https://attack.mitre.org/techniques/T1046/)
 
 ```bash
-# Host discovery
+# Host discovery across victim subnet
 nmap -sn 192.168.2.0/24
 
-# Full service + OS detection scan
+# Full service + OS detection
 nmap -Pn -sS -sV -sC -O 192.168.2.20
 
 # Fast top-100 port scan
 nmap -Pn -sS 192.168.2.20 -F
 
-# Save output for report
+# Save result for report
 nmap -Pn -sV 192.168.2.20 -oN nmap-windows-victim.txt
 ```
 
 > **Screenshot — Nmap Scan Output (Kali)**
-> ![Nmap Scan](screenshots/03-attacks/01-nmap-scan-kali.png)
-> *Kali terminal showing Nmap results: open ports, services, OS fingerprint for Windows victim*
+> ![Nmap Scan](screenshots/03-attacks/nmap-scan-kali.png)
+> *Nmap terminal output: open ports, service versions, OS fingerprint detected on Windows 10 victim*
 
 ---
 
 ### Attack 2 — Privilege Escalation Simulation
 
-**MITRE ATT&CK:** T1098 — Account Manipulation
+**MITRE ATT&CK:** [T1098 — Account Manipulation](https://attack.mitre.org/techniques/T1098/)
 
 ```cmd
-REM On Windows victim (cmd as Administrator)
+REM On Windows victim — run cmd as Administrator
 net user attacker P@ss123 /add
 net localgroup administrators attacker /add
 net user
 ```
 
 > **Screenshot — Privilege Escalation (Windows CMD)**
-> ![Privilege Escalation](screenshots/03-attacks/02-privilege-escalation-cmd.png)
-> *Windows cmd showing: new user "attacker" created and added to Administrators group*
+> ![Privilege Escalation](screenshots/03-attacks/privilege-escalation-cmd.png)
+> *Windows cmd: user "attacker" created + added to Administrators group — command output visible*
 
 ---
 
 ### Attack 3 — File Integrity Monitoring Trigger
 
-**MITRE ATT&CK:** T1565 — Data Manipulation
+**MITRE ATT&CK:** [T1565 — Data Manipulation](https://attack.mitre.org/techniques/T1565/)
 
 ```cmd
-REM Create suspicious file on victim desktop
+REM Drop suspicious files on victim system
 echo simulated malware payload > C:\Users\victime1\Desktop\malicious.txt
-echo stolen credentials > C:\Temp\creds_dump.txt
+echo stolen credentials       > C:\Temp\creds_dump.txt
 ```
 
 > **Screenshot — Malicious File Created**
-> ![FIM File Creation](screenshots/03-attacks/03-fim-file-created.png)
-> *Windows Explorer showing malicious.txt on victim desktop — used to trigger FIM alert in Wazuh*
+> ![FIM File](screenshots/03-attacks/fim-file-creation.png)
+> *Windows: malicious.txt on victim desktop — triggers Wazuh FIM alert with file hash + path*
 
 ---
 
 ## Detection & Alerts
 
-All attacks generated alerts in Wazuh within seconds of execution.
+All attacks generated Wazuh alerts within seconds of execution.
 
 ---
 
-### Alert — Nmap Scan Detected
+### Alert — User Created + Escalated to Admin
 
-> **Screenshot — Wazuh Nmap Alert**
-> ![Nmap Alert](screenshots/04-wazuh-alerts/01-alert-nmap-detected.png)
-> *Wazuh alert: rule ID 40101, source IP 192.168.1.10, description "Port scan detected", severity HIGH*
+Windows Event ID `4720` (user created) and `4732` (added to Administrators) both captured and correlated:
 
----
-
-### Alert — New User Created + Privilege Escalation
-
-> **Screenshot — Wazuh User Creation Alert**
-> ![User Creation Alert](screenshots/04-wazuh-alerts/02-alert-new-user-created.png)
-> *Wazuh alert detail: Windows Event ID 4720 (user created) + 4732 (added to Administrators)*
-
-> **Screenshot — Alert JSON Detail**
-> ![Alert JSON](screenshots/04-wazuh-alerts/03-alert-detail-json.png)
-> *Expanded alert showing full JSON: win.eventdata.targetUserName, agent.name, rule.description, timestamp*
+> **Screenshot — Wazuh Alert: New User + Privilege Escalation**
+> ![User Alert](screenshots/04-wazuh-alerts/alert-new-user-created.png)
+> *Alert detail: win.eventdata.targetUserName="attacker", EventID=4720/4732, rule level=12, agent=windows-victim*
 
 ---
 
-### Alert — File Integrity Monitoring Event
+### MITRE ATT&CK Coverage
 
-> **Screenshot — Wazuh FIM Alert**
-> ![FIM Alert](screenshots/04-wazuh-alerts/04-alert-fim-event.png)
-> *Wazuh syscheck event: file path, SHA256 hash before/after, event type "added", agent: windows-victim*
+All simulated techniques automatically mapped by Wazuh:
 
----
-
-### MITRE ATT&CK Mapping
-
-> **Screenshot — MITRE ATT&CK View**
-> ![MITRE ATT&CK](screenshots/04-wazuh-alerts/05-mitre-attack-view.png)
-> *Wazuh MITRE ATT&CK dashboard showing triggered techniques: T1046, T1098, T1565 — all from this lab*
-
----
-
-## Dashboards & Monitoring
-
-> **Screenshot — Security Events Overview**
-> ![Security Events](screenshots/05-dashboards/01-security-events-overview.png)
-> *Wazuh events timeline showing alert spike during attack simulation phase — events by severity and rule*
-
-> **Screenshot — CIS Compliance Dashboard**
-> ![CIS Compliance](screenshots/05-dashboards/02-cis-compliance.png)
-> *CIS Benchmark analysis for Windows victim — pass/fail percentage across configuration checks*
-
-> **Screenshot — pfSense Traffic Graph**
-> ![Traffic Graph](screenshots/05-dashboards/03-pfsense-traffic-graph.png)
-> *pfSense interface traffic on EM2 (victim zone) during Nmap scan — visible traffic spike*
+| Technique ID | Name | Triggered by |
+|---|---|---|
+| [T1046](https://attack.mitre.org/techniques/T1046/) | Network Service Discovery | Nmap scan from Kali |
+| [T1098](https://attack.mitre.org/techniques/T1098/) | Account Manipulation | net user + net localgroup |
+| [T1565](https://attack.mitre.org/techniques/T1565/) | Data Manipulation | malicious.txt file drop |
 
 ---
 
@@ -529,65 +616,63 @@ All attacks generated alerts in Wazuh within seconds of execution.
 
 | Finding | Evidence | Severity |
 |---|---|---|
-| Port scan detected within 3 seconds | Wazuh alert rule 40101 | High |
-| New admin account created and logged | Windows Event ID 4720 + 4732 | Critical |
-| File creation on victim desktop detected | Wazuh FIM syscheck event | Medium |
-| pfSense block rule fully isolated attacker | 100% packet loss + pfSense log | Confirmed |
-| pfSense block events forwarded to SIEM | Wazuh alert from syslog source | Confirmed |
-| All 3 MITRE techniques successfully mapped | T1046, T1098, T1565 | — |
+| Port scan detected within 3 seconds | Wazuh alert — rule 40101 | High |
+| Rogue admin account created and logged | Windows Event ID 4720 + 4732 | Critical |
+| File creation on victim desktop detected | Wazuh FIM syscheck event — hash recorded | Medium |
+| pfSense block rule fully isolated attacker | 100% packet loss + pfSense firewall log entries | Confirmed |
+| pfSense blocks forwarded to Wazuh SIEM | Wazuh alerts ingested via UDP 514 syslog | Confirmed |
+| MITRE ATT&CK techniques mapped | T1046 · T1098 · T1565 visible in dashboard | — |
 
 ---
 
 ## Incident Report — IR-001
 
-**Date:** 2024-XX-XX  
-**Analyst:** [Your Name]  
-**Severity:** HIGH
+**Date:** 2024-XX-XX · **Analyst:** [Your Name] · **Severity:** HIGH
 
-**Summary:**  
-A simulated attacker (`192.168.1.10`) performed reconnaissance (port scan), created an unauthorized administrator account, and dropped suspicious files on the victim machine (`192.168.2.20`). All three activities were detected by Wazuh within seconds.
+**Summary:** Simulated attacker (`192.168.1.10`) performed reconnaissance, created an unauthorized administrator account, and dropped suspicious files on victim `192.168.2.20`. All activities detected and logged by Wazuh.
 
-**Timeline:**
+**Attack timeline:**
 
-| Time | Event | Source |
+| Time | Event | Detection Source |
 |---|---|---|
 | T+0:00 | Nmap scan launched from Kali | Kali terminal |
-| T+0:03 | Scan detected — rule 40101 fired | Wazuh alert |
+| T+0:03 | Scan detected — Wazuh rule 40101 fired | Wazuh alert |
 | T+2:00 | `net user attacker /add` executed | Windows cmd |
-| T+2:05 | Event ID 4720 logged, Wazuh alert fired | Wazuh + Windows Security log |
+| T+2:05 | Event ID 4720 — Wazuh alert triggered | Windows Security log |
 | T+2:10 | `net localgroup administrators attacker /add` | Windows cmd |
 | T+2:12 | Event ID 4732 — admin escalation detected | Wazuh alert |
-| T+4:00 | malicious.txt created on desktop | Windows |
-| T+4:55 | FIM event — file hash logged by Wazuh | Wazuh syscheck |
+| T+4:00 | malicious.txt dropped on victim desktop | Windows |
+| T+4:55 | FIM event — file path + SHA256 logged | Wazuh syscheck |
 
 **Indicators of Compromise:**
 
 - Attacker IP: `192.168.1.10`
 - Rogue account: `attacker` (local administrator)
 - Malicious file: `C:\Users\victime1\Desktop\malicious.txt`
-- Techniques: T1046, T1098, T1565
+- MITRE techniques: T1046 · T1098 · T1565
 
-**Containment:**  
-Block rule applied in pfSense (`192.168.1.0/24 → 192.168.2.0/24` BLOCK). Rogue user account removed. Malicious files deleted.
+**Containment:** Block rule applied in pfSense (`192.168.1.0/24 → 192.168.2.0/24 BLOCK`). Rogue account removed: `net user attacker /delete`. Malicious files deleted.
 
 **Recommendations:**
 
-1. Enforce account creation alerting with immediate response playbook
-2. Deploy fail2ban on Linux hosts and Windows account lockout policy
-3. Enable Wazuh active response to auto-block attacker IPs on critical alerts
-4. Add Suricata on pfSense for deep packet inspection
+1. Enforce account creation alert with automatic Wazuh active response
+2. Windows account lockout after 5 failed attempts (Group Policy)
+3. Wazuh active response: auto-block attacker IP on critical severity alerts
+4. Deploy Suricata on pfSense for deep packet inspection
+5. SSH key-only authentication on all Linux hosts
 
 ---
 
 ## Challenges & Solutions
 
-| Challenge | Solution |
-|---|---|
-| Network connectivity issues between segments | Verified pfSense interface assignments and DHCP ranges; used `netstat -rn` to debug routing |
-| DHCP misconfiguration on victim zone | Manually configured static IPs via Netplan (Ubuntu) and adapter settings (Windows) |
-| Firewall blocking Wazuh agent traffic | Added explicit PASS rule for port 1514/1515 from victim zone to SIEM zone |
-| Agent registration version mismatch | Matched agent version to manager version (4.7.5); re-ran `agent-auth` manually |
-| pfSense syslog not arriving in Wazuh | Added `<allowed-ips>` block in `ossec.conf` and restarted `wazuh-manager` |
+| Challenge | Root Cause | Solution |
+|---|---|---|
+| No connectivity between victim and SIEM | OPT1 firewall rules missing port 1514 PASS | Added explicit PASS rule: 192.168.2.0/24 → 192.168.3.10 port 1514 |
+| DHCP not working on victim zone | OPT1 DHCP service not enabled | Enabled under `Services → DHCP Server → OPT1` |
+| pfSense blocking inter-zone by default | Default deny on non-LAN interfaces | Created explicit PASS rules on OPT1 and OPT2 tabs |
+| Wazuh agent registration failed | Port 1515 blocked by OPT1 firewall rule | Added PASS rule for port 1515 (enrollment) alongside 1514 |
+| pfSense syslog not arriving in Wazuh | `allowed-ips` in ossec.conf used wrong IP | Changed to pfSense OPT2 IP `192.168.3.1`, restarted manager |
+| Ubuntu static IP not applying | Netplan YAML indentation error | Fixed formatting, re-ran `sudo netplan apply` |
 
 ---
 
@@ -595,16 +680,18 @@ Block rule applied in pfSense (`192.168.1.0/24 → 192.168.2.0/24` BLOCK). Rogue
 
 | Category | Tools / Concepts |
 |---|---|
-| Network segmentation | pfSense, VLAN-equivalent isolated subnets, NAT, firewall rules |
-| SIEM deployment | Wazuh 4.7.5, OpenSearch, agent enrollment, custom rules |
-| Log collection | Windows Event Log, Sysmon, Linux syslog, pfSense syslog forwarding |
-| Attack simulation | Nmap, privilege escalation, file integrity testing |
-| Threat detection | FIM, user account monitoring, network scan detection |
-| Compliance | CIS Benchmark assessment via Wazuh SCA |
-| Threat mapping | MITRE ATT&CK framework (T1046, T1098, T1565) |
-| Incident response | Alert triage, IOC identification, containment, reporting |
-| Virtualization | VMware, multi-VM networking, snapshot management |
-| Linux administration | Netplan, systemd, dpkg, UFW |
+| **Network segmentation** | pfSense, zone-based firewall, NAT, inter-zone routing |
+| **SIEM deployment** | Wazuh 4.7.5, OpenSearch, all-in-one installation |
+| **Log integration** | pfSense → Wazuh syslog (UDP 514) · agent logs (UDP 1514) |
+| **Endpoint monitoring** | Wazuh agents on Windows + Linux, ossec.conf tuning |
+| **Attack simulation** | Nmap, privilege escalation, FIM triggering |
+| **Threat detection** | Port scan, account monitoring, file integrity monitoring |
+| **Threat mapping** | MITRE ATT&CK — T1046, T1098, T1565 |
+| **Compliance** | CIS Benchmark via Wazuh SCA module |
+| **Incident response** | Alert triage, IOC identification, containment, IR reporting |
+| **Virtualization** | VMware Workstation, multi-VM internal networking |
+| **Linux administration** | Netplan, systemd, dpkg, ss, netstat |
+| **Windows administration** | PowerShell, sc query, MSI silent install, Event Viewer |
 
 ---
 
@@ -614,35 +701,33 @@ Block rule applied in pfSense (`192.168.1.0/24 → 192.168.2.0/24` BLOCK). Rogue
 soc-lab/
 ├── README.md
 ├── screenshots/
+│   ├── pfSense logs go to Wazuh.png
+│   ├── varossecetcossec.conf.png
 │   ├── 01-infrastructure/
 │   │   ├── vm-overview.png
 │   │   ├── pfsense-dashboard.png
 │   │   ├── pfsense-interfaces.png
-│   │   ├── pfsense-fw-rules-lan.png
-│   │   ├── pfsense-fw-rules-opt1.png
-│   │   ├── wazuh-dashboard-home.png
-│   │   └── wazuh-agents-active.png
+│   │   ├── Firewall rules LAN.png
+│   │   ├── Firewall rules OPT1.png
+│   │   ├── Firewall rules OPT2.png
+│   │   ├── Firewall rules WAN.png
+│   │   ├── Wazuh-dashboard.png
+│   │   └── Wazuh-agents-page.png
 │   ├── 02-firewall-demo/
-│   │   ├── 01-before-block-ping.png
-│   │   ├── 02-pfsense-block-rule.png
-│   │   ├── 03-after-block-ping.png
-│   │   ├── 04-before-after-split.png
-│   │   ├── 05-pfsense-firewall-log.png
-│   │   └── 06-wazuh-firewall-alert.png
+│   │   ├── before-block-ping.png
+│   │   ├── pfsense-block-rule.png
+│   │   ├── after-block-ping.png
+│   │   ├── attacker bolcked.png
+│   │   ├── befor and after firewall.png
+│   │   ├── pfsense-firewall-log.png
+│   │   └── wazuh-firewall-alerts.png
 │   ├── 03-attacks/
-│   │   ├── 01-nmap-scan-kali.png
-│   │   ├── 02-privilege-escalation-cmd.png
-│   │   └── 03-fim-file-created.png
+│   │   ├── nmap-scan-kali.png
+│   │   ├── privilege-escalation-cmd.png
+│   │   └── fim-file-creation.png
 │   ├── 04-wazuh-alerts/
-│   │   ├── 01-alert-nmap-detected.png
-│   │   ├── 02-alert-new-user-created.png
-│   │   ├── 03-alert-detail-json.png
-│   │   ├── 04-alert-fim-event.png
-│   │   └── 05-mitre-attack-view.png
+│   │   └── alert-new-user-created.png
 │   └── 05-dashboards/
-│       ├── 01-security-events-overview.png
-│       ├── 02-cis-compliance.png
-│       └── 03-pfsense-traffic-graph.png
 ├── rules/
 │   └── local_rules.xml
 ├── config/
@@ -656,6 +741,6 @@ soc-lab/
 
 ## Author
 
-Built as a personal SOC lab project to develop hands-on skills in blue team operations, SIEM deployment, and network security monitoring.
+Built as a hands-on SOC lab project to develop practical skills in blue team operations, SIEM engineering, network security monitoring, and incident response.
 
-*LinkedIn: [your profile] | GitHub: [your profile]*
+*LinkedIn: [your profile] · GitHub: [your profile]*
